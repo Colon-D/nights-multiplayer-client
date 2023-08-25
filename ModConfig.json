@@ -1,0 +1,21 @@
+{
+  "ModId": "nights.test.client",
+  "ModName": "Client",
+  "ModAuthor": "Jordan",
+  "ModVersion": "1.0.0",
+  "ModDescription": "Connects to a NiGHTS Server",
+  "ModDll": "nights.test.client.dll",
+  "ModIcon": "Preview.png",
+  "ModR2RManagedDll32": "x86/nights.test.client.dll",
+  "ModR2RManagedDll64": "x64/nights.test.client.dll",
+  "ModNativeDll32": "",
+  "ModNativeDll64": "",
+  "IsLibrary": false,
+  "ReleaseMetadataFileName": "nights.test.client.ReleaseMetadata.json",
+  "PluginData": {},
+  "IsUniversalMod": false,
+  "ModDependencies": [ "reloaded.sharedlib.hooks" ],
+  "OptionalDependencies": [],
+  "SupportedAppId": [ "nights.exe" ],
+  "ProjectUrl": ""
+}
