@@ -15,6 +15,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using static System.Runtime.InteropServices.JavaScript.JSType;
+using System.Numerics;
+using System.IO;
 
 namespace nights.test.client;
 
@@ -117,6 +119,7 @@ public class Mod : ModBase // <= Do not Remove.
 		unsafe {
 			// jump past code that hides cursor
 			const byte jmp_rel8 = 0xEB;
+			const byte nop = 0x90;
 			Memory.Instance.SafeWrite(0x40A88F, jmp_rel8);
 
 			//MainGameLoopHook = _hooks.CreateHook<MainGameLoop>(MainGameLoopImpl, 0x40a460).Activate();
@@ -125,6 +128,9 @@ public class Mod : ModBase // <= Do not Remove.
 			Memory.Instance.SafeWrite(0x40AE56, jmp_rel8);
 			// enable background input
 			Memory.Instance.SafeWrite(0x40A850, (byte)1);
+			// load claris + elliot in all dreams
+			Memory.Instance.SafeWrite(0x564EFC, nop);
+			Memory.Instance.SafeWrite(0x564EFD, nop);
 		}
 	}
 
@@ -163,10 +169,9 @@ public class Mod : ModBase // <= Do not Remove.
 				}
 				ImGui.EndColumns();
 
-				if ((*Globals.WorldManager)->Player == null) {
-					ImGui.Text("Please enter a Dream...");
-				}
-				else {
+				if ((*Globals.WorldManager)->Player != null) {
+					ImGui.Text("Please exit your Dream...");
+				} else {
 					if (ImGui.Button("Connect", new ImVec2 { X = 0, Y = 0 })) {
 						ConnectToServer();
 					}
@@ -181,8 +186,14 @@ public class Mod : ModBase // <= Do not Remove.
 		}
 	}
 
-	[Function(new[] { Register.eax, Register.ecx, Register.esi }, Register.edi, StackCleanup.Caller)]
-	public unsafe delegate int PlayerSubCtor(int visitor_subtype, nuint player, PlayerSub* visitor);
+	[Function(Register.eax, Register.eax, StackCleanup.Caller)]
+	public unsafe delegate int CharacterCtor(Character* character);
+
+	[Function(Register.edi, Register.eax, StackCleanup.Callee)]
+	public unsafe delegate int AnimationCtor(Character* character, PlayerSubType playerSubType);
+
+	[Function(Register.esi, Register.eax, StackCleanup.Caller)]
+	public unsafe delegate int AnimationInit(Character* character);
 
 	public unsafe bool ConnectToServerOnce = false;
 
@@ -195,28 +206,39 @@ public class Mod : ModBase // <= Do not Remove.
 
 	public Dictionary<uint, ClientData> ClientData = new Dictionary<uint, ClientData>();
 	public Mutex ClientDataMutex = new Mutex();
-	public unsafe PlayerSub* ClientVisitor = null;
-	public unsafe PlayerSub* ClientNights = null;
+	// using the Player's PlayerSub instead does not work well.
+	// Rendering appears more "glitchy", probably because some variables I
+	// do not know are affecting the results.
+	// Instead we make our own Characters and use those for rendering.
+	public unsafe Character*[] ClientChars = new Character*[6];
 
 	public TcpClient Server = new TcpClient();
 	//public UdpClient UdpServer = new UdpClient();
 
 	public uint ClientId = 0;
 
+	public unsafe Character* CreateCharacter(PlayerSubType playerSubType) {
+		var characterCtor = _hooks.CreateWrapper<CharacterCtor>(0x47FA10, out _);
+		var animationCtor = _hooks.CreateWrapper<AnimationCtor>(0x47FFB0, out _);
+		var animationInit = _hooks.CreateWrapper<AnimationInit>(0x4800D0, out _);
+
+		var character = (Character*)Memory.Instance.Allocate(0xEC);
+		characterCtor(character);
+		animationCtor(character, playerSubType); // playerSubType has to be loaded, otherwise it crashes
+		animationInit(character);
+		character->Animation->Motion->ThisNeedsToBe2OrAnimationsAreBrokenIDKWhy = 2;
+
+		return character;
+	}
+
 	public unsafe void ConnectToServer() {
 		if (!ConnectToServerOnce) {
 			ConnectToServerOnce = true;
 
-			var playerSubCtor = _hooks.CreateWrapper<PlayerSubCtor>(0x56cff0, out _);
+			Console.WriteLine("Hooking!");
 
-			ClientVisitor = (PlayerSub*)Memory.Instance.Allocate(0x1E8);
-			playerSubCtor(2, (nuint)(*Globals.WorldManager)->Player, ClientVisitor);
-			ClientVisitor->Animation->Motion->ThisNeedsToBe2OrAnimationsAreBrokenIDKWhy = 2;
-			Console.WriteLine("new visitor: 0x" + ((int)ClientVisitor).ToString("X"));
-			ClientNights = (PlayerSub*)Memory.Instance.Allocate(0x298);
-			playerSubCtor(0, (nuint)(*Globals.WorldManager)->Player, ClientNights);
-			ClientNights->Animation->Motion->ThisNeedsToBe2OrAnimationsAreBrokenIDKWhy = 2;
-			Console.WriteLine("new nights: 0x" + ((int)ClientNights).ToString("X"));
+			CreatePlayerSubsHook = _hooks.CreateHook<CreatePlayerSubs>(CreatePlayerSubsImpl, 0x4A1820).Activate();
+			DestroyPlayerSubsHook = _hooks.CreateHook<DestroyPlayerSubs>(DestroyPlayerSubsImpl, 0x489740).Activate();
 
 			string[] asmCallRenderVisitor = {
 				$"use32",
@@ -233,27 +255,54 @@ public class Mod : ModBase // <= Do not Remove.
 		new Thread(ConnectToServerRepeat).Start();
 	}
 
-	// signature: int __thiscall RenderRenderable3D(void *this)
-	// location: 0x4AF610
 	[Function(CallingConventions.MicrosoftThiscall)]
-	public unsafe delegate int RenderRenderable3D(PlayerSub* renderable3d);
+	public unsafe delegate int RenderRenderable3D(Character* renderable3d);
+
+	[Function(Register.esi, Register.eax, StackCleanup.Callee)]
+	public unsafe delegate int CreatePlayerSubs(Character* player, int dream);
+	public unsafe IHook<CreatePlayerSubs> CreatePlayerSubsHook;
+	public unsafe int CreatePlayerSubsImpl(Character* player, int dream) {
+		var result = CreatePlayerSubsHook.OriginalFunction(player, dream);
+
+		// Create Character for each PlayerSubType
+		// (except PlayerSubType.OtherNightsWizemanFight, they are unplayable)
+		for (int i = 0; i < 5; ++i) {
+			ClientChars[i] = CreateCharacter((PlayerSubType)i);
+		}
+
+		return result;
+	}
+
+	[Function(CallingConventions.MicrosoftThiscall)]
+	public unsafe delegate int DestroyPlayerSubs(int a1);
+	public unsafe IHook<DestroyPlayerSubs> DestroyPlayerSubsHook;
+	public unsafe int DestroyPlayerSubsImpl(int a1) {
+		var result = DestroyPlayerSubsHook.OriginalFunction(a1);
+
+		for (int i = 0; i < 5; ++i) {
+			ClientChars[i]->Dtor();
+		}
+
+		return result;
+	}
 
 	public unsafe void RenderVisitor() {
 		var renderable3d_render = _hooks.CreateWrapper<RenderRenderable3D>(0x4AF610, out _);
 		ClientDataMutex.WaitOne();
-		if (ClientVisitor != null && ClientNights != null) {
-			foreach (var clientData in ClientData) {
-				if (clientData.Key == ClientId) {
-					continue;
-				}
-				var playerSub = clientData.Value.PlayerSubType == 0 ? ClientNights : ClientVisitor;
-				playerSub->Animation->Pos = clientData.Value.Pos;
-				playerSub->Animation->Rot = clientData.Value.Rot;
-				playerSub->Animation->Motion->Animation = clientData.Value.Animation.Id;
-				playerSub->Animation->Motion->Frame = clientData.Value.Animation.Frame;
-				playerSub->Animation->Motion->FrameAlt = clientData.Value.Animation.FrameAlt;
-				renderable3d_render(playerSub);
+		foreach (var clientData in ClientData) {
+			if (clientData.Key == ClientId) {
+				continue;
 			}
+			var clientChar = ClientChars[(int)clientData.Value.PlayerSubType];
+			if (clientChar == null) {
+				continue;
+			}
+			clientChar->Animation->Pos = clientData.Value.Pos;
+			clientChar->Animation->Rot = clientData.Value.Rot;
+			clientChar->Animation->Motion->Animation = clientData.Value.Animation.Id;
+			clientChar->Animation->Motion->Frame = clientData.Value.Animation.Frame;
+			clientChar->Animation->Motion->FrameAlt = clientData.Value.Animation.FrameAlt;
+			renderable3d_render(clientChar);
 		}
 		ClientDataMutex.ReleaseMutex();
 	}
@@ -353,11 +402,14 @@ public class Mod : ModBase // <= Do not Remove.
 			if (disconnectFromServer) {
 				break;
 			}
-			var player = *(byte**)(world_manager + 0x50);
+			var player = (*Globals.WorldManager)->Player;
 			if (player == null) {
 				continue;
 			}
-			var playerSub = ((Player*)player)->PlayerSub;
+			// todo: don't do this on seperate thread,
+			// main thread should be responsible for updating data that should
+			// be sent to server
+			var playerSub = player->PlayerSub;
 			if (playerSub == null) {
 				continue;
 			}
@@ -391,13 +443,6 @@ public class Mod : ModBase // <= Do not Remove.
 		Server.Close();
 		ClientDataMutex.WaitOne();
 		ClientData.Clear();
-		// crashes? I guess we'll just leak memory!
-		//ClientVisitor->Dtor();
-		//Memory.Instance.Free((nuint)ClientVisitor);
-		//ClientVisitor = null;
-		//ClientNights->Dtor();
-		//Memory.Instance.Free((nuint)ClientNights);
-		//ClientNights = null;
 		ClientDataMutex.ReleaseMutex();
 	}
 

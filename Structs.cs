@@ -1,4 +1,7 @@
 ﻿using Reloaded.Hooks.Definitions;
+using Reloaded.Hooks.Definitions.X86;
+using Reloaded.Memory.Sources;
+using SharpDX;
 using System.Runtime.InteropServices;
 
 namespace nights.test.client.structs;
@@ -18,16 +21,44 @@ public struct Rot3 {
 }
 
 [StructLayout(LayoutKind.Explicit)]
+public unsafe struct Character {
+	[StructLayout(LayoutKind.Explicit)]
+	private unsafe struct CharacterVFTable {
+		[FieldOffset(0x0)]
+		public IntPtr Dtor;
+	}
+
+	[FieldOffset(0x0)]
+	private CharacterVFTable* _vftable;
+
+	[Function(CallingConventions.MicrosoftThiscall)]
+	private unsafe delegate Character* DtorT(Character* self, char a2);
+
+	public Character* Dtor() {
+		var fn = Globals.Hooks.CreateWrapper<DtorT>(_vftable->Dtor, out _);
+		fixed (Character* self = &this) {
+			var result = fn(self, (char)0);
+			Memory.Instance.Free((nuint)self);
+			return result;
+		}
+	}
+
+	[FieldOffset(0x88)]
+	public Animation* Animation;
+}
+
+[StructLayout(LayoutKind.Explicit)]
 public unsafe struct PlayerSub {
+	[FieldOffset(0x88)]
+	public Animation* Animation;
+
 	[FieldOffset(0xEC)]
 	public Player* Player;
 
 	[FieldOffset(0xF0)]
 	public PlayerSubType Type;
-
-	[FieldOffset(0x88)]
-	public Animation* Animation;
 }
+
 
 [StructLayout(LayoutKind.Explicit)]
 public unsafe struct Player {
