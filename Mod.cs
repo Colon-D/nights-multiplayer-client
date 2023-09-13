@@ -15,8 +15,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using static System.Runtime.InteropServices.JavaScript.JSType;
-using System.Numerics;
-using System.IO;
+using System.Runtime.CompilerServices;
 
 namespace nights.test.client;
 
@@ -95,26 +94,35 @@ public class Mod : ModBase // <= Do not Remove.
 			}
 		}).ConfigureAwait(false);
 
+		var IO = ImGui.GetIO();
+		unsafe {
+			var modDir = context.ModLoader.GetDirectoryForModId(_modConfig.ModId);
+			var fontDir = Path.Combine(modDir, "res/FiraSans-Regular.ttf");
+			IO.FontDefault = ImGui.ImFontAtlasAddFontFromFileTTF(IO.Fonts, fontDir, 16f, null, ref Unsafe.AsRef<ushort>(null));
+		}
+
 		// don't write imgui file
 		ImGui.GetIO().IniFilename = null;
 		// PRESENTATION!
 		var style = ImGui.GetStyle();
 		var colors = style.Colors;
-		colors[(int)ImGuiCol.WindowBg] = Color(0x8C00ADFF);
-		colors[(int)ImGuiCol.Button] = Color(0xFF31B5FF);
-		colors[(int)ImGuiCol.ButtonHovered] = Color(0xFF31B57F);
-		colors[(int)ImGuiCol.ButtonActive] = Color(0xFF31B53F);
+		colors[(int)ImGuiCol.WindowBg] = Color(0x7F7F7FBF);
+		colors[(int)ImGuiCol.Button] = Color(0x9F9F9FFF);
+		colors[(int)ImGuiCol.ButtonHovered] = Color(0xBFBFBFFF);
+		colors[(int)ImGuiCol.ButtonActive] = Color(0xDFDFDFFF);
 		colors[(int)ImGuiCol.CheckMark] = Color(0xFFFFFFFF);
-		colors[(int)ImGuiCol.FrameBg] = Color(0xFF31B5FF);
-		colors[(int)ImGuiCol.FrameBgHovered] = Color(0xFF31B57F);
-		colors[(int)ImGuiCol.FrameBgActive] = Color(0xFF31B53F);
-		colors[(int)ImGuiCol.Separator] = Color(0xFF31B5FF);
-		colors[(int)ImGuiCol.TitleBg] = Color(0xFF31B5FF);
-		colors[(int)ImGuiCol.TitleBgActive] = Color(0xFF31B5FF);
-		colors[(int)ImGuiCol.TitleBgCollapsed] = Color(0xFF31B5FF);
+		colors[(int)ImGuiCol.FrameBg] = Color(0x9F9F9FFF);
+		colors[(int)ImGuiCol.FrameBgHovered] = Color(0xBFBFBFFF);
+		colors[(int)ImGuiCol.FrameBgActive] = Color(0xDFDFDFFF);
+		colors[(int)ImGuiCol.Separator] = Color(0x9F9F9FBF);
+		colors[(int)ImGuiCol.Text] = Color(0xFFFFFFFF);
+		colors[(int)ImGuiCol.TitleBg] = Color(0x9F9F9FFF);
+		colors[(int)ImGuiCol.TitleBgActive] = Color(0x9F9F9FFF);
+		colors[(int)ImGuiCol.TitleBgCollapsed] = Color(0x9F9F9FFF);
 		style.Colors = colors;
 		style.WindowBorderSize = 0f;
-		style.WindowRounding = 8f;
+		style.WindowRounding = 4f;
+		style.FrameRounding = 4f;
 
 		unsafe {
 			// jump past code that hides cursor
@@ -134,21 +142,22 @@ public class Mod : ModBase // <= Do not Remove.
 		}
 	}
 
-	private bool _imgui_open = true;
 	private byte[] _multiplayerHost = new byte[255];
 	private ushort _multiplayerPort = 46944;
 	public bool disconnectFromServer = false;
 	public bool connectingToServer = false;
 	private void Imgui() {
-		if (!ImGui.Begin(
-			"NiGHTS Client Debugger",
-			ref _imgui_open,
-			(int)ImGuiWindowFlags.NoResize | (int)ImGuiWindowFlags.NoMove
-		)) {
-			return;
+		unsafe {
+			if (!ImGui.Begin(
+				"NiGHTS Client Debugger",
+				ref Unsafe.AsRef<bool>(null),
+				(int)ImGuiWindowFlags.NoResize | (int)ImGuiWindowFlags.NoMove
+			)) {
+				return;
+			}
 		}
 		ImGui.SetWindowPosVec2(new ImVec2 { X = 8, Y = 8 }, 0);
-		ImGui.SetWindowSizeVec2(new ImVec2 { X = 192 + 96, Y = 0 }, 0);
+		ImGui.SetWindowSizeVec2(new ImVec2 { X = 128f + 64f, Y = 0 }, 0);
 
 		unsafe {
 			if (connectingToServer) {
@@ -156,14 +165,14 @@ public class Mod : ModBase // <= Do not Remove.
 			}
 			else if (!Server.Connected) {
 				ImGui.BeginColumns("IP Address", 2, 0);
-				ImGui.SetColumnWidth(0, 192f);
-				ImGui.SetColumnWidth(1, 96f);
-				ImGui.SetNextItemWidth(192f);
+				ImGui.SetColumnWidth(0, 128f);
+				ImGui.SetColumnWidth(1, 64f);
+				ImGui.SetNextItemWidth(128f - 16f);
 				fixed (byte* buffer = _multiplayerHost) {
 					ImGui.InputText("##Host", (sbyte*)buffer, 255, 0, null, 0);
 				}
 				ImGui.NextColumn();
-				ImGui.SetNextItemWidth(96f);
+				ImGui.SetNextItemWidth(64f - 16f);
 				fixed (ushort* multiplayerPortPtr = &_multiplayerPort) {
 					ImGui.InputScalar("##Port", (int)ImGuiDataType.U16, (nint)multiplayerPortPtr, 0, 0, "%i", 0);
 				}
@@ -182,7 +191,7 @@ public class Mod : ModBase // <= Do not Remove.
 					disconnectFromServer = true;
 				}
 			}
-			ImGui.Separator();
+			//ImGui.Separator();
 		}
 	}
 
