@@ -119,7 +119,7 @@ public unsafe struct Motion {
 
 public struct ServerRequest {
 	public Version Version { get; set; }
-	//public ushort UdpPort { get; set; }
+	public ushort UdpPort { get; set; }
 }
 
 public struct Version {

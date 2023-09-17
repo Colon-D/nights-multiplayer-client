@@ -16,6 +16,7 @@ using System.Text;
 using System.Text.Json;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 using System.Runtime.CompilerServices;
+using System.Net;
 
 namespace nights.test.client;
 
@@ -86,7 +87,7 @@ public class Mod : ModBase // <= Do not Remove.
 
 		// initialize Dear ImGui
 		SDK.Init(_hooks);
-		const string DefaultIp = "localhost";
+		const string DefaultIp = "127.0.0.1";
 		Encoding.UTF8.GetBytes(DefaultIp, 0, DefaultIp.Length, _multiplayerHost, 0);
 		ImguiHook.Create(Imgui, new ImguiHookOptions() {
 			Implementations = new List<IImguiHook>() {
@@ -222,7 +223,7 @@ public class Mod : ModBase // <= Do not Remove.
 	public unsafe Character*[] ClientChars = new Character*[6];
 
 	public TcpClient Server = new TcpClient();
-	//public UdpClient UdpServer = new UdpClient();
+	public UdpClient UdpServer = new UdpClient();
 
 	public uint ClientId = 0;
 
@@ -342,37 +343,34 @@ public class Mod : ModBase // <= Do not Remove.
 		Server.GetStream().Read(json_bytes, 0, lengthInt);
 		var json = Encoding.UTF8.GetString(json_bytes);
 
-		//// Debug Output the received JSON
-		//Console.WriteLine(json);
-
 		// deserialize data
 		return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 	}
 
-	//// untested
-	//public unsafe void SendUdp<T>(T data) {
-	//	// serialize data
-	//	var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-	//	var json_bytes = Encoding.UTF8.GetBytes(json);
+	// untested
+	public unsafe void SendUdp<T>(T data) {
+		// serialize data
+		var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+		var json_bytes = Encoding.UTF8.GetBytes(json);
 
-	//	// send serialized data in one packet (turns out UDP doesn't need size?)
-	//	UdpServer.Send(json_bytes, json_bytes.Length);
-	//}
+		// send serialized data in one packet (turns out UDP doesn't need size?)
+		UdpServer.Send(json_bytes, json_bytes.Length);
+	}
 
-	//// untested
-	//public unsafe T? RecvUdp<T>() where T : class {
-	//	// recv serialized data
-	//	var RemoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
-	//	var json_bytes = UdpServer.Receive(ref RemoteIpEndPoint);
-	//	var json = Encoding.UTF8.GetString(json_bytes);
+	// untested
+	public unsafe T? RecvUdp<T>() where T : class {
+		// recv serialized data
+		var RemoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
+		var json_bytes = UdpServer.Receive(ref RemoteIpEndPoint);
+		var json = Encoding.UTF8.GetString(json_bytes);
 
-	//	// deserialize data, return null if deserialization fails
-	//	try {
-	//		return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-	//	} catch (Exception) {
-	//		return null;
-	//	}
-	//}
+		// deserialize data, return null if deserialization fails
+		try {
+			return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+		} catch (Exception) {
+			return null;
+		}
+	}
 
 	public unsafe void ConnectToServerRepeat() {
 		// convert _multiplayerHost to a string, excluding \0 characters, there is probably an better way to do this
@@ -391,13 +389,17 @@ public class Mod : ModBase // <= Do not Remove.
 			return;
 		}
 
-		//UdpServer = new UdpClient();
-		//UdpServer.Connect(ipString, _multiplayerPort);
-		//ushort udpPort = (ushort)((IPEndPoint)UdpServer.Client.LocalEndPoint).Port;
+		// create udp port
+		// use local tcp port
+		//var tcpPort = (ushort)((IPEndPoint)Server.Client.LocalEndPoint).Port;
+		//UdpServer = new UdpClient(tcpPort);
+		UdpServer = new UdpClient();
+		UdpServer.Connect(ipString, _multiplayerPort);
+		ushort udpPort = (ushort)((IPEndPoint)UdpServer.Client.LocalEndPoint).Port;
 
 		var serverRequest = new ServerRequest {
 			Version = new structs.Version { Major = 0, Minor = 0 },
-			//UdpPort = udpPort
+			UdpPort = udpPort
 		};
 		Send(serverRequest);
 
@@ -423,8 +425,7 @@ public class Mod : ModBase // <= Do not Remove.
 				continue;
 			}
 
-			// todo: udp?
-			Send(new ClientData {
+			SendUdp(new ClientData {
 				PlayerSubType = (uint)playerSub->Type,
 				Pos = playerSub->Animation->Pos,
 				Rot = playerSub->Animation->Rot,
@@ -438,6 +439,7 @@ public class Mod : ModBase // <= Do not Remove.
 				break;
 			}
 			// receive other player positions from server
+			// todo: udp?
 			var received = Recv<Dictionary<uint, ClientData>>();
 			if (disconnectFromServer || !Server.Connected) {
 				break;
