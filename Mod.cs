@@ -223,7 +223,9 @@ public class Mod : ModBase // <= Do not Remove.
 	public unsafe Character*[] ClientChars = new Character*[6];
 
 	public TcpClient Server = new TcpClient();
-	public UdpClient UdpServer = new UdpClient();
+	public UdpClient UdpServer = new UdpClient(); // send data to server
+	//public UdpClient UdpClient = new UdpClient(); // recv data from server (or anywhere - its unchecked), spaghetti moment
+	// ideally I want both the udp server and client in one, but I'm not smart enough right now
 
 	public uint ClientId = 0;
 
@@ -250,14 +252,14 @@ public class Mod : ModBase // <= Do not Remove.
 			CreatePlayerSubsHook = _hooks.CreateHook<CreatePlayerSubs>(CreatePlayerSubsImpl, 0x4A1820).Activate();
 			DestroyPlayerSubsHook = _hooks.CreateHook<DestroyPlayerSubs>(DestroyPlayerSubsImpl, 0x489740).Activate();
 
-			string[] asmCallRenderVisitor = {
+			string[] asmCallRenderVisitors = {
 				$"use32",
 				$"{_hooks.Utilities.PushCdeclCallerSavedRegisters()}",
-				$"{_hooks.Utilities.GetAbsoluteCallMnemonics(RenderVisitor, out renderPlayersReverseWrapper)}",
+				$"{_hooks.Utilities.GetAbsoluteCallMnemonics(RenderVisitors, out renderPlayersReverseWrapper)}",
 				$"{_hooks.Utilities.PopCdeclCallerSavedRegisters()}"
 			};
 			RenderPlayersAsmHook = _hooks.CreateAsmHook(
-				asmCallRenderVisitor, 0x4AED24, AsmHookBehaviour.ExecuteFirst
+				asmCallRenderVisitors, 0x4AED24, AsmHookBehaviour.ExecuteFirst
 			).Activate();
 		}
 
@@ -296,7 +298,28 @@ public class Mod : ModBase // <= Do not Remove.
 		return result;
 	}
 
-	public unsafe void RenderVisitor() {
+	public unsafe void RenderVisitors() {
+		// -- START SEND POSITION OVER UDP --
+
+		var player = (*Globals.WorldManager)->Player;
+		if (player != null) {
+			var playerSub = player->PlayerSub;
+			if (playerSub != null) {
+				SendUdp(new ClientData {
+					PlayerSubType = (uint)playerSub->Type,
+					Pos = playerSub->Animation->Pos,
+					Rot = playerSub->Animation->Rot,
+					Animation = new ClientAnimationData {
+						Id = playerSub->Animation->Motion->Animation,
+						Frame = playerSub->Animation->Motion->Frame,
+						FrameAlt = playerSub->Animation->Motion->FrameAlt
+					}
+				});
+			}
+		}
+
+		// -- END SEND POSITION OVER UDP --
+
 		var renderable3d_render = _hooks.CreateWrapper<RenderRenderable3D>(0x4AF610, out _);
 		ClientDataMutex.WaitOne();
 		foreach (var clientData in ClientData) {
@@ -360,9 +383,15 @@ public class Mod : ModBase // <= Do not Remove.
 	// untested
 	public unsafe T? RecvUdp<T>() where T : class {
 		// recv serialized data
-		var RemoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
-		var json_bytes = UdpServer.Receive(ref RemoteIpEndPoint);
-		var json = Encoding.UTF8.GetString(json_bytes);
+		byte[] jsonBytes = null;
+		try {
+			var RemoteIpEndPoint = new IPEndPoint(IPAddress.Any, 0);
+			jsonBytes = UdpServer.Receive(ref RemoteIpEndPoint);
+		} catch (Exception ex) {
+			Console.WriteLine("Error receiving UDP data: " + ex.Message);
+			return null;
+		}
+		var json = Encoding.UTF8.GetString(jsonBytes);
 
 		// deserialize data, return null if deserialization fails
 		try {
@@ -393,9 +422,29 @@ public class Mod : ModBase // <= Do not Remove.
 		// use local tcp port
 		//var tcpPort = (ushort)((IPEndPoint)Server.Client.LocalEndPoint).Port;
 		//UdpServer = new UdpClient(tcpPort);
-		UdpServer = new UdpClient();
+		//UdpServer = new UdpClient();
 		UdpServer.Connect(ipString, _multiplayerPort);
 		ushort udpPort = (ushort)((IPEndPoint)UdpServer.Client.LocalEndPoint).Port;
+
+		// create UDP Client without Connecting
+		// bind to any port
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		//UdpClient.Client.Bind(new IPEndPoint(IPAddress.Loopback, 0)); // todo: any if not localhost THIS WON'T WORK OUTSIDE OF LAN
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		//ushort udpPort = (ushort)((IPEndPoint)UdpClient.Client.LocalEndPoint).Port;
+
+		// TODO:
+		// - Currently, data is not being received through UDP.
+		// - I think this is because we are connecting to the server's 46944 udp port, and it expects data from there.
+		// - We need some way 
+
+		// THIS ISN"T WORKING
+		// JUST USE THE UDP LISTEN SOCKET ON THE SERVER, OR CREATE A SOCKET
+		// SERVERSIDE AND SEND THE PORT THROUGH TCP HERE! Somehow...
 
 		var serverRequest = new ServerRequest {
 			Version = new structs.Version { Major = 0, Minor = 0 },
@@ -409,38 +458,18 @@ public class Mod : ModBase // <= Do not Remove.
 		var world_manager = *(byte**)0x24C4EC4;
 
 		while (true) {
-			Thread.Sleep(1000 / 60);
-			if (disconnectFromServer) {
-				break;
-			}
-			var player = (*Globals.WorldManager)->Player;
-			if (player == null) {
-				continue;
-			}
-			// todo: don't do this on seperate thread,
-			// main thread should be responsible for updating data that should
-			// be sent to server
-			var playerSub = player->PlayerSub;
-			if (playerSub == null) {
-				continue;
-			}
+			//Thread.Sleep(1000 / 60);
+			//if (disconnectFromServer) {
+			//	break;
+			//}
 
-			SendUdp(new ClientData {
-				PlayerSubType = (uint)playerSub->Type,
-				Pos = playerSub->Animation->Pos,
-				Rot = playerSub->Animation->Rot,
-				Animation = new ClientAnimationData {
-					Id = playerSub->Animation->Motion->Animation,
-					Frame = playerSub->Animation->Motion->Frame,
-					FrameAlt = playerSub->Animation->Motion->FrameAlt
-				}
-			});
 			if (disconnectFromServer || !Server.Connected) {
 				break;
 			}
 			// receive other player positions from server
 			// todo: udp?
-			var received = Recv<Dictionary<uint, ClientData>>();
+			var received = RecvUdp<Dictionary<uint, ClientData>>();
+			// todo: verify from server
 			if (disconnectFromServer || !Server.Connected) {
 				break;
 			}
